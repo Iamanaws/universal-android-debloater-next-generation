@@ -3,7 +3,6 @@
 use crate::core::{
     adb::{ACommand as AdbCommand, PmListPacksFlag},
     sync::User,
-    theme::Theme,
     uad_lists::{PackageHashMap, PackageState, Removal, UadList},
 };
 use crate::gui::widgets::package_row::PackageRow;
@@ -122,17 +121,6 @@ pub fn fetch_packages(
     }
     user_package.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     user_package
-}
-
-pub fn string_to_theme(theme: &str) -> Theme {
-    match theme {
-        "Dark" => Theme::Dark,
-        "Light" => Theme::Light,
-        "Lupin" => Theme::Lupin,
-        // Auto uses `Display`, so it doesn't have a canonical repr
-        t if t.starts_with("Auto") => Theme::Auto,
-        _ => Theme::default(),
-    }
 }
 
 pub fn setup_uad_dir(dir: &Path) -> PathBuf {
