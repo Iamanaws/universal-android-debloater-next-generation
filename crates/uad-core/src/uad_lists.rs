@@ -1,5 +1,6 @@
 use crate::CACHE_DIR;
-use crate::core::utils::{format_diff_time_from_now, last_modified_date};
+use crate::utils::{format_diff_time_from_now, last_modified_date};
+use log::warn;
 use retry::{OperationResult, delay::Fixed, retry};
 use serde::{Deserialize, Serialize};
 use serde_json;
@@ -15,7 +16,7 @@ pub const LIST_FNAME: &str = "uad_lists.json";
     reason = "https://github.com/Universal-Debloater-Alliance/universal-android-debloater-next-generation/discussions/608"
 )]
 // not `const`, because it's too big
-pub static DATA: &str = include_str!("../../resources/assets/uad_lists.json");
+pub static DATA: &str = include_str!("../../../resources/assets/uad_lists.json");
 
 #[derive(Deserialize, Debug, Clone, PartialEq, Hash, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -148,7 +149,7 @@ impl Opposite for PackageState {
 }
 
 // Bad names. To be changed!
-#[derive(Default, Debug, Deserialize, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Default, Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Removal {
     #[default]
     Recommended,

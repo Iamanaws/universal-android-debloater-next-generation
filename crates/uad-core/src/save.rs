@@ -1,7 +1,6 @@
-use crate::core::config::{Config, DeviceSettings};
-use crate::core::sync::{CorePackage, Phone, User, apply_pkg_state_commands};
-use crate::core::utils::DisplayablePath;
-use crate::gui::widgets::package_row::PackageRow;
+use crate::config::{Config, DeviceSettings};
+use crate::sync::{CorePackage, Phone, User, apply_pkg_state_commands};
+use crate::utils::DisplayablePath;
 use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -25,7 +24,7 @@ pub struct UserBackup {
 pub async fn backup_phone(
     users: Vec<User>,
     device_id: String,
-    phone_packages: Vec<Vec<PackageRow>>,
+    phone_packages: Vec<Vec<CorePackage>>,
 ) -> Result<bool, String> {
     let mut backup = PhoneBackup {
         device_id: device_id.clone(),
@@ -39,10 +38,7 @@ pub async fn backup_phone(
         };
 
         for p in phone_packages[u.index].clone() {
-            user_backup.packages.push(CorePackage {
-                name: p.name.clone(),
-                state: p.state,
-            });
+            user_backup.packages.push(p);
         }
         backup.users.push(user_backup);
     }
@@ -112,7 +108,7 @@ pub struct RestoreResult {
 
 pub fn restore_backup(
     selected_device: &Phone,
-    packages: &[Vec<PackageRow>],
+    packages: &[Vec<CorePackage>],
     settings: &DeviceSettings,
 ) -> Result<RestoreResult, String> {
     match fs::read_to_string(
@@ -141,7 +137,7 @@ pub fn restore_backup(
                         .iter()
                         .find(|x| x.name == backup_package.name)
                     {
-                        Some(p) => p.into(),
+                        Some(p) => p.clone(),
                         None => {
                             skipped_packages += 1;
                             warn!(

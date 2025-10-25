@@ -1,8 +1,8 @@
 use crate::CACHE_DIR;
 use crate::CONFIG_DIR;
-use crate::core::utils::DisplayablePath;
-use crate::core::{sync::User, theme::Theme};
-use crate::gui::views::settings::Settings;
+use crate::utils::DisplayablePath;
+use crate::{sync::User, theme::Theme};
+use log::error;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -54,20 +54,22 @@ impl Default for GeneralSettings {
 static CONFIG_FILE: LazyLock<PathBuf> = LazyLock::new(|| CONFIG_DIR.join("config.toml"));
 
 impl Config {
-    pub fn save_changes(settings: &Settings, device_id: &String) {
-        let mut config = Self::load_configuration_file();
-        if let Some(device) = config
+    pub fn save_device_settings(
+        &mut self,
+        device_settings: DeviceSettings,
+        general: GeneralSettings,
+    ) {
+        if let Some(device) = self
             .devices
             .iter_mut()
-            .find(|x| x.device_id == *device_id)
+            .find(|x| x.device_id == device_settings.device_id)
         {
-            device.clone_from(&settings.device);
+            *device = device_settings;
         } else {
-            debug!("config: New device settings saved");
-            config.devices.push(settings.device.clone());
+            self.devices.push(device_settings);
         }
-        config.general.clone_from(&settings.general);
-        let toml = toml::to_string(&config).unwrap();
+        self.general = general;
+        let toml = toml::to_string(&self).unwrap();
         fs::write(&*CONFIG_FILE, toml).expect("Could not write config file to disk!");
     }
 

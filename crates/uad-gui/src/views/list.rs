@@ -1,19 +1,22 @@
-use crate::core::config::DeviceSettings;
-use crate::core::helpers::button_primary;
-use crate::core::sync::{AdbError, Phone, User, apply_pkg_state_commands, run_adb_action};
-use crate::core::theme::Theme;
-use crate::core::uad_lists::{
+use crate::helpers::button_primary;
+use crate::style;
+use crate::theme::Theme;
+use crate::widgets::navigation_menu::ICONS;
+use log::{error, info, warn};
+use std::path::PathBuf;
+use uad_core::config::DeviceSettings;
+use uad_core::sync::{AdbError, Phone, User, apply_pkg_state_commands, run_adb_shell_action};
+use uad_core::uad_lists::{
     Opposite, PackageHashMap, PackageState, Removal, UadList, UadListState, load_debloat_lists,
 };
-use crate::core::utils::{EXPORT_FILE_NAME, NAME, export_selection, fetch_packages, open_url};
-use crate::gui::style;
-use crate::gui::widgets::navigation_menu::ICONS;
-use std::path::PathBuf;
+use uad_core::utils::{
+    EXPORT_FILE_NAME, NAME, export_selection, fetch_packages, matches_search, open_url,
+};
 
-use crate::gui::views::settings::Settings;
-use crate::gui::widgets::modal::Modal;
-use crate::gui::widgets::package_row::{Message as RowMessage, PackageRow};
-use crate::gui::widgets::text;
+use crate::views::settings::Settings;
+use crate::widgets::modal::Modal;
+use crate::widgets::package_row::{Message as RowMessage, PackageRow};
+use crate::widgets::text;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{
     Column, Space, button, checkbox, column, container, horizontal_space, pick_list, radio, row,
@@ -712,8 +715,7 @@ impl List {
                     && (package_filter == PackageState::All || p.state == package_filter)
                     && (removal_filter == Removal::All || p.removal == removal_filter)
                     && (self.input_value.is_empty()
-                        || p.name.contains(&self.input_value)
-                        || p.description.contains(&self.input_value))
+                        || matches_search(&p.name, &self.input_value, Some(&p.description)))
             })
             .map(|(i, _)| i)
             .collect();
@@ -727,11 +729,21 @@ impl List {
     ) -> Vec<Vec<PackageRow>> {
         let serial = device_serial.as_ref();
         if user_list.len() <= 1 {
-            vec![fetch_packages(&uad_list, serial, None)]
+            vec![
+                fetch_packages(&uad_list, serial, None)
+                    .into_iter()
+                    .map(PackageRow::from)
+                    .collect(),
+            ]
         } else {
             user_list
                 .iter()
-                .map(|user| fetch_packages(&uad_list, serial, Some(user.id)))
+                .map(|user| {
+                    fetch_packages(&uad_list, serial, Some(user.id))
+                        .into_iter()
+                        .map(PackageRow::from)
+                        .collect()
+                })
                 .collect()
         }
     }
@@ -995,16 +1007,17 @@ impl List {
                 let wanted_state = package.state.opposite(settings.device.disable_mode);
 
                 // Verify the actual package state after the operation
-                let actual_state = crate::core::sync::verify_package_state(
-                    &package.name,
+                let actual_state = uad_core::sync::get_package_state(
                     selected_device.adb_id.as_str(),
+                    &package.name,
                     Some(selected_device.user_list[p.i_user].id),
-                );
+                )
+                .unwrap_or(PackageState::Enabled);
 
                 // Check for unexpected cross-user behavior
                 if actual_state == wanted_state {
                     // Use core detection function
-                    if let Some(notification) = crate::core::sync::detect_cross_user_behavior(
+                    if let Some(notification) = uad_core::sync::detect_cross_user_behavior(
                         &package.name,
                         selected_device.adb_id.as_str(),
                         selected_device.user_list[p.i_user].id,
@@ -1019,8 +1032,16 @@ impl List {
                     package.state = wanted_state;
                 } else if actual_state != wanted_state {
                     // Package state verification failed, attempt fallback
-                    let fallback_result = crate::core::sync::attempt_fallback(
-                        package,
+                    // Convert PackageRow to CorePackage
+                    let core_package = uad_core::sync::CorePackage {
+                        name: package.name.clone(),
+                        state: package.state,
+                        description: package.description.clone(),
+                        removal: package.removal,
+                    };
+
+                    let fallback_result = uad_core::sync::attempt_fallback(
+                        &core_package,
                         wanted_state,
                         actual_state,
                         selected_device.user_list[p.i_user],
@@ -1112,10 +1133,12 @@ impl List {
 
     fn on_export_selection(&mut self) -> Task<Message> {
         let i_user = self.selected_user.unwrap_or_default().index;
-        Task::perform(
-            export_selection(self.phone_packages[i_user].clone()),
-            Message::SelectionExported,
-        )
+        let package_names: Vec<String> = self.phone_packages[i_user]
+            .iter()
+            .filter(|p| p.selected)
+            .map(|p| p.name.clone())
+            .collect();
+        Task::perform(export_selection(package_names), Message::SelectionExported)
     }
 
     fn on_selection_exported(&mut self, export: Result<bool, String>) -> Task<Message> {
@@ -1270,14 +1293,18 @@ fn build_action_pkg_commands(
             };
             // In the end there is only one package state change
             // even if we run multiple adb commands
+            let p_info_clone = p_info.clone();
+            let device_id = device.adb_id.clone();
             commands.push(Task::perform(
-                run_adb_action(
-                    // this is typically small,
-                    // so it's fine.
-                    device.adb_id.clone(),
-                    action,
-                    p_info,
-                ),
+                async move {
+                    run_adb_shell_action(
+                        // this is typically small,
+                        // so it's fine.
+                        device_id, action,
+                    )
+                    .await
+                    .map(|_| p_info_clone)
+                },
                 if j == 0 {
                     Message::VerifyAndFallback
                 } else {

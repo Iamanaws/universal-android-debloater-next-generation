@@ -1,5 +1,8 @@
+#[cfg(feature = "gui")]
 use dark_light;
+#[cfg(feature = "gui")]
 use iced::{Color, color};
+#[cfg(feature = "gui")]
 use std::sync::LazyLock;
 
 /*
@@ -11,6 +14,7 @@ Coincidentally, this also ensures consistent colors across the GUI,
 at the cost of requiring a restart to update the palette.
 (this is just a patch, not a fix)
 */
+#[cfg(feature = "gui")]
 pub static OS_COLOR_SCHEME: LazyLock<dark_light::Mode> =
     LazyLock::new(|| dark_light::detect().unwrap_or(dark_light::Mode::Unspecified));
 
@@ -28,12 +32,14 @@ pub enum Theme {
     Light,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Clone, Copy)]
 pub struct BaseColors {
     pub background: Color,
     pub foreground: Color,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Clone, Copy)]
 pub struct NormalColors {
     pub primary: Color,
@@ -43,6 +49,7 @@ pub struct NormalColors {
     pub error: Color,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Clone, Copy)]
 pub struct BrightColors {
     pub primary: Color,
@@ -51,6 +58,7 @@ pub struct BrightColors {
     pub error: Color,
 }
 
+#[cfg(feature = "gui")]
 #[derive(Debug, Clone, Copy)]
 pub struct ColorPalette {
     pub base: BaseColors,
@@ -68,6 +76,7 @@ impl Theme {
     /// This `fn` _could_ be `const`,
     /// but `deref`ing a lazy-`static` is non-`const`.
     #[must_use]
+    #[cfg(feature = "gui")]
     pub fn palette(self) -> ColorPalette {
         const DARK: ColorPalette = ColorPalette {
             base: BaseColors {

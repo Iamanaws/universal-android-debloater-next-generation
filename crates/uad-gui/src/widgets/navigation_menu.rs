@@ -1,12 +1,12 @@
-use crate::core::helpers::button_primary;
-pub use crate::core::sync::Phone;
-use crate::core::theme::Theme;
-use crate::core::update::{SelfUpdateState, SelfUpdateStatus};
-pub use crate::gui::views::about::Message as AboutMessage;
-pub use crate::gui::views::list::{List as AppsView, LoadingState as ListLoadingState};
-use crate::gui::{Message, style, widgets::text};
+use crate::helpers::button_primary;
+use crate::theme::Theme;
+pub use crate::views::about::Message as AboutMessage;
+pub use crate::views::list::{List as AppsView, LoadingState as ListLoadingState};
+use crate::{gui::Message, style, widgets::text};
 use iced::widget::{Space, button, container, pick_list, row, tooltip};
 use iced::{Alignment, Element, Font, Length, Renderer, alignment, font};
+pub use uad_core::sync::Phone;
+use uad_core::update::{SelfUpdateState, SelfUpdateStatus};
 
 /// resources/assets/icons.ttf, loaded in [`crate::gui::UadGui`]
 pub const ICONS: Font = Font {

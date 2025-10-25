@@ -1,16 +1,17 @@
-use crate::CACHE_DIR;
-use crate::core::adb;
-use crate::core::helpers::button_primary;
-use crate::core::theme::Theme;
-use crate::core::uad_lists::LIST_FNAME;
-use crate::core::utils::{NAME, last_modified_date, open_url};
-use crate::gui::{UpdateState, style, widgets::text};
+use crate::helpers::button_primary;
+use crate::theme::Theme;
+use crate::{gui::UpdateState, style, widgets::text};
 use iced::widget::{Space, column, container, row};
 use iced::{Alignment, Element, Length, Renderer};
+use log::error;
 use std::path::PathBuf;
+use uad_core::CACHE_DIR;
+use uad_core::adb;
+use uad_core::uad_lists::LIST_FNAME;
+use uad_core::utils::{NAME, last_modified_date, open_url};
 
 #[cfg(feature = "self-update")]
-use crate::core::update::SelfUpdateStatus;
+use uad_core::update::SelfUpdateStatus;
 
 #[derive(Default, Debug, Clone)]
 pub struct About {}

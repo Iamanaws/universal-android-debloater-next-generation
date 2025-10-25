@@ -4,12 +4,13 @@
     clippy::wildcard_imports,
     reason = "Iced style modules use PascalCase and &Theme; wildcard for local convenience"
 )]
-use crate::core::theme::Theme;
+use crate::theme::Theme;
+use iced::application;
 use iced::widget::{
     button, checkbox, container, overlay, pick_list, radio, scrollable, text, text_editor,
     text_input,
 };
-use iced::{Background, Border, Color, Shadow, application};
+use iced::{Background, Border, Color, Shadow};
 
 impl application::DefaultStyle for Theme {
     fn default_style(&self) -> application::Appearance {

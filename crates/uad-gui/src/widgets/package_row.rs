@@ -1,9 +1,10 @@
-use crate::core::sync::Phone;
-use crate::core::theme::Theme;
-use crate::core::uad_lists::{PackageState, Removal, UadList};
-use crate::gui::style;
-use crate::gui::views::settings::Settings;
-use crate::gui::widgets::text;
+use crate::style;
+use crate::theme::Theme;
+use crate::views::settings::Settings;
+use crate::widgets::text;
+use log::warn;
+use uad_core::sync::{CorePackage, Phone};
+use uad_core::uad_lists::{PackageState, Removal, UadList};
 
 use iced::widget::{Space, button, checkbox, row};
 use iced::{Alignment, Element, Length, Renderer, Task, alignment};
@@ -140,5 +141,56 @@ impl PackageRow {
         ]
         .align_y(Alignment::Center)
         .into()
+    }
+}
+
+// Conversions between PackageRow and CorePackage
+impl From<CorePackage> for PackageRow {
+    fn from(core: CorePackage) -> Self {
+        Self {
+            name: core.name.clone(),
+            state: core.state,
+            description: core.description,
+            uad_list: UadList::All, // Default value
+            removal: core.removal,
+            selected: false, // Default to not selected
+            current: false,  // Default to not current
+        }
+    }
+}
+
+impl From<&CorePackage> for PackageRow {
+    fn from(core: &CorePackage) -> Self {
+        Self {
+            name: core.name.clone(),
+            state: core.state,
+            description: core.description.clone(),
+            uad_list: UadList::All, // Default value
+            removal: core.removal,
+            selected: false,
+            current: false,
+        }
+    }
+}
+
+impl From<&PackageRow> for CorePackage {
+    fn from(row: &PackageRow) -> Self {
+        Self {
+            name: row.name.clone(),
+            state: row.state,
+            description: row.description.clone(),
+            removal: row.removal,
+        }
+    }
+}
+
+impl From<PackageRow> for CorePackage {
+    fn from(row: PackageRow) -> Self {
+        Self {
+            name: row.name,
+            state: row.state,
+            description: row.description,
+            removal: row.removal,
+        }
     }
 }

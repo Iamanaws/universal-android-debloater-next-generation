@@ -1,9 +1,9 @@
-use crate::core::utils::NAME;
-
 use serde::Deserialize;
 
 #[cfg(feature = "self-update")]
 use {
+    crate::utils::NAME,
+    log::{debug, error},
     retry::{OperationResult, delay::Fibonacci, retry},
     std::fs,
     std::io,

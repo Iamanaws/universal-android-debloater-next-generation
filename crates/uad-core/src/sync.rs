@@ -1,8 +1,8 @@
-use crate::core::{
+use crate::{
     adb::{ACommand as AdbCommand, PM_CLEAR_PACK},
     uad_lists::PackageState,
 };
-use crate::gui::{views::list::PackageInfo, widgets::package_row::PackageRow};
+use log::{error, info};
 use retry::{OperationResult, delay::Fixed, retry};
 use serde::{Deserialize, Serialize};
 
@@ -59,27 +59,25 @@ pub enum AdbError {
 
 /// Run an arbitrary shell action via the typed ADB wrapper.
 /// This replaces the deprecated `adb_shell_command`.
-pub async fn run_adb_action<S: AsRef<str>>(
+pub async fn run_adb_shell_action<S: AsRef<str>>(
     device_serial: S,
     action: String,
-    p: PackageInfo,
-) -> Result<PackageInfo, AdbError> {
+) -> Result<String, AdbError> {
     let serial = device_serial.as_ref();
-    let label = &p.removal;
 
     match AdbCommand::new().shell(serial).raw(&action) {
         Ok(o) => {
             if ["Error", "Failure"].iter().any(|&e| o.contains(e)) {
                 let friendly_msg = make_friendly_error_message(&o, &action);
-                return Err(AdbError::Generic(format!("[{label}] {friendly_msg}")));
+                return Err(AdbError::Generic(friendly_msg));
             }
-            info!("[{label}] {action} -> {o}");
-            Ok(p)
+            info!("{action} -> {o}");
+            Ok(o)
         }
         Err(err) => {
             if !err.contains("[not installed for") {
                 let friendly_msg = make_friendly_error_message(&err, &action);
-                return Err(AdbError::Generic(format!("[{label}] {friendly_msg}")));
+                return Err(AdbError::Generic(friendly_msg));
             }
             Err(AdbError::Generic(err))
         }
@@ -155,32 +153,10 @@ pub fn user_flag(user_id: Option<User>) -> String {
 pub struct CorePackage {
     pub name: String,
     pub state: PackageState,
-}
-
-impl From<&mut PackageRow> for CorePackage {
-    fn from(pr: &mut PackageRow) -> Self {
-        Self {
-            name: pr.name.clone(),
-            state: pr.state,
-        }
-    }
-}
-impl From<PackageRow> for CorePackage {
-    fn from(pr: PackageRow) -> Self {
-        Self {
-            name: pr.name.clone(),
-            state: pr.state,
-        }
-    }
-}
-
-impl From<&PackageRow> for CorePackage {
-    fn from(pr: &PackageRow) -> Self {
-        Self {
-            name: pr.name.clone(),
-            state: pr.state,
-        }
-    }
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub removal: crate::uad_lists::Removal,
 }
 
 pub fn apply_pkg_state_commands(
@@ -428,7 +404,7 @@ pub fn list_users_idx_prot(device_serial: &str) -> Vec<User> {
 /// that are authorized by the user.
 pub async fn get_devices_list() -> Vec<Phone> {
     retry(
-        Fixed::from_millis(500).take(if cfg!(debug_assertions) { 3 } else { 120 }),
+        Fixed::from_millis(500).take(if cfg!(debug_assertions) { 3 } else { 10 }),
         || match AdbCommand::new().devices() {
             Ok(devices) => {
                 let mut device_list: Vec<Phone> = vec![];
@@ -463,13 +439,13 @@ pub async fn initial_load() -> bool {
     }
 }
 
-/// Verify the actual state of a package on the device
-pub fn verify_package_state(
-    package_name: &str,
+/// Get the current state of a package on a device
+pub fn get_package_state(
     device_serial: &str,
+    package_name: &str,
     user_id: Option<u16>,
-) -> PackageState {
-    use crate::core::adb::{ACommand as AdbCommand, PmListPacksFlag};
+) -> Result<PackageState, String> {
+    use crate::adb::PmListPacksFlag;
 
     // Check if package is enabled
     if let Ok(enabled_packages) = AdbCommand::new()
@@ -478,7 +454,7 @@ pub fn verify_package_state(
         .list_packages_sys(Some(PmListPacksFlag::OnlyEnabled), user_id)
     {
         if enabled_packages.contains(&package_name.to_string()) {
-            return PackageState::Enabled;
+            return Ok(PackageState::Enabled);
         }
     }
 
@@ -489,23 +465,21 @@ pub fn verify_package_state(
         .list_packages_sys(Some(PmListPacksFlag::OnlyDisabled), user_id)
     {
         if disabled_packages.contains(&package_name.to_string()) {
-            return PackageState::Disabled;
+            return Ok(PackageState::Disabled);
         }
     }
 
-    // Check if package exists at all (including uninstalled)
-    if let Ok(all_packages) = AdbCommand::new()
-        .shell(device_serial)
-        .pm()
-        .list_packages_sys(Some(PmListPacksFlag::IncludeUninstalled), user_id)
-    {
-        if all_packages.contains(&package_name.to_string()) {
-            return PackageState::Uninstalled;
-        }
-    }
+    // If not in either list, assume it's uninstalled (or doesn't exist)
+    Ok(PackageState::Uninstalled)
+}
 
-    // Package not found at all
-    PackageState::Uninstalled
+/// Verify the current state of a package on a device
+pub fn verify_package_state(
+    device_serial: &str,
+    package_name: &str,
+    user_id: Option<u16>,
+) -> PackageState {
+    get_package_state(device_serial, package_name, user_id).unwrap_or(PackageState::Uninstalled)
 }
 
 /// Check if a package exists on any other users besides the target user.
@@ -532,7 +506,7 @@ pub fn check_cross_user_package_existence(
 
 /// Attempt fallback action when package state verification fails
 pub fn attempt_fallback(
-    package: &crate::gui::widgets::package_row::PackageRow,
+    package: &CorePackage,
     wanted_state: PackageState,
     actual_state: PackageState,
     user: User,
@@ -544,6 +518,8 @@ pub fn attempt_fallback(
             let core_package = CorePackage {
                 name: package.name.clone(),
                 state: PackageState::Enabled,
+                description: package.description.clone(),
+                removal: package.removal,
             };
             let commands =
                 apply_pkg_state_commands(&core_package, PackageState::Disabled, user, phone);
@@ -553,7 +529,7 @@ pub fn attempt_fallback(
                 let action = commands[0].clone();
                 match AdbCommand::new().shell(&phone.adb_id).raw(&action) {
                     Ok(_) => Ok("disabled package instead of uninstalling".to_string()),
-                    Err(err) => Err(format!("Failed to disable package: {}", err)),
+                    Err(err) => Err(format!("Failed to disable package: {err}")),
                 }
             } else {
                 Err("No disable command available for this Android version".to_string())
@@ -565,6 +541,8 @@ pub fn attempt_fallback(
             let core_package = CorePackage {
                 name: package.name.clone(),
                 state: PackageState::Enabled,
+                description: package.description.clone(),
+                removal: package.removal,
             };
             let commands =
                 apply_pkg_state_commands(&core_package, PackageState::Uninstalled, user, phone);
@@ -574,7 +552,7 @@ pub fn attempt_fallback(
                 let action = commands[0].clone();
                 match AdbCommand::new().shell(&phone.adb_id).raw(&action) {
                     Ok(_) => Ok("uninstalled package instead of disabling".to_string()),
-                    Err(err) => Err(format!("Failed to uninstall package: {}", err)),
+                    Err(err) => Err(format!("Failed to uninstall package: {err}")),
                 }
             } else {
                 Err("No uninstall command available for this Android version".to_string())
@@ -587,6 +565,8 @@ pub fn attempt_fallback(
             let core_package = CorePackage {
                 name: package.name.clone(),
                 state: PackageState::Disabled,
+                description: package.description.clone(),
+                removal: package.removal,
             };
             let uninstall_commands =
                 apply_pkg_state_commands(&core_package, PackageState::Uninstalled, user, phone);
@@ -602,6 +582,8 @@ pub fn attempt_fallback(
                         let core_package_uninstalled = CorePackage {
                             name: package.name.clone(),
                             state: PackageState::Uninstalled,
+                            description: package.description.clone(),
+                            removal: package.removal,
                         };
                         let enable_commands = apply_pkg_state_commands(
                             &core_package_uninstalled,
@@ -617,16 +599,13 @@ pub fn attempt_fallback(
                                     Ok("uninstalled and reinstalled package to enable it"
                                         .to_string())
                                 }
-                                Err(err) => Err(format!("Failed to reinstall package: {}", err)),
+                                Err(err) => Err(format!("Failed to reinstall package: {err}")),
                             }
                         } else {
                             Ok("uninstalled package but couldn't reinstall".to_string())
                         }
                     }
-                    Err(err) => Err(format!(
-                        "Failed to uninstall package for reinstall: {}",
-                        err
-                    )),
+                    Err(err) => Err(format!("Failed to uninstall package for reinstall: {err}")),
                 }
             } else {
                 Err("No uninstall command available for reinstall attempt".to_string())
@@ -635,8 +614,7 @@ pub fn attempt_fallback(
 
         // Other cases - no fallback available
         _ => Err(format!(
-            "No fallback available for wanted state {:?} and actual state {:?}",
-            wanted_state, actual_state
+            "No fallback available for wanted state {wanted_state:?} and actual state {actual_state:?}"
         )),
     }
 }

@@ -1,21 +1,21 @@
-pub mod style;
-pub mod views;
-pub mod widgets;
+use crate::theme::string_to_theme;
+use crate::theme::{OS_COLOR_SCHEME, Theme};
+use log::{debug, error, info};
+use uad_core::adb;
+use uad_core::sync::{Phone, get_devices_list, initial_load};
+use uad_core::uad_lists::UadListState;
+use uad_core::update::{Release, SelfUpdateState, SelfUpdateStatus, get_latest_release};
+use uad_core::utils::NAME;
 
-use crate::core::adb;
-use crate::core::sync::{Phone, get_devices_list, initial_load};
-use crate::core::theme::{OS_COLOR_SCHEME, Theme};
-use crate::core::uad_lists::UadListState;
-use crate::core::update::{Release, SelfUpdateState, SelfUpdateStatus, get_latest_release};
-use crate::core::utils::{NAME, string_to_theme};
-
+use crate::views::about::{About as AboutView, Message as AboutMessage};
+use crate::views::list::{
+    List as AppsView, LoadingState as ListLoadingState, Message as AppsMessage,
+};
+use crate::views::settings::{Message as SettingsMessage, Settings as SettingsView};
+use crate::widgets::navigation_menu::nav_menu;
 use iced::advanced::graphics::image::image_rs::ImageFormat;
 use iced::font;
 use iced::window::icon;
-use views::about::{About as AboutView, Message as AboutMessage};
-use views::list::{List as AppsView, LoadingState as ListLoadingState, Message as AppsMessage};
-use views::settings::{Message as SettingsMessage, Settings as SettingsView};
-use widgets::navigation_menu::nav_menu;
 
 use iced::widget::column;
 use iced::{Alignment, Element, Length, Settings, Task, window::Settings as Window};
@@ -23,7 +23,7 @@ use iced::{Alignment, Element, Length, Settings, Task, window::Settings as Windo
 use std::path::PathBuf;
 
 #[cfg(feature = "self-update")]
-use crate::core::update::{BIN_NAME, download_update_to_temp_file, remove_file};
+use uad_core::update::{BIN_NAME, download_update_to_temp_file, remove_file};
 
 #[derive(Default, Debug, Clone)]
 enum View {
@@ -35,8 +35,8 @@ enum View {
 
 #[derive(Default, Clone)]
 pub struct UpdateState {
-    self_update: SelfUpdateState,
-    uad_list: UadListState,
+    pub self_update: SelfUpdateState,
+    pub uad_list: UadListState,
 }
 
 #[derive(Default)]
@@ -79,8 +79,8 @@ impl UadGui {
         (
             Self::default(),
             Task::batch([
-                // Used in crate::gui::widgets::navigation_menu::ICONS. Name is `icomoon`.
-                font::load(include_bytes!("../../resources/assets/icons.ttf").as_slice())
+                // Used in crate::widgets::navigation_menu::ICONS. Name is `icomoon`.
+                font::load(include_bytes!("../../../resources/assets/icons.ttf").as_slice())
                     .map(Message::FontLoaded),
                 Task::perform(initial_load(), Message::ADBSatisfied),
                 Task::perform(get_devices_list(), Message::LoadDevices),
@@ -375,10 +375,10 @@ impl UadGui {
         let logo: &[u8] = match *OS_COLOR_SCHEME {
             // remember to keep `Unspecified` in sync with `src/core/theme`
             dark_light::Mode::Dark | dark_light::Mode::Unspecified => {
-                include_bytes!("../../resources/assets/logo-dark.png")
+                include_bytes!("../../../resources/assets/logo-dark.png")
             }
             dark_light::Mode::Light => {
-                include_bytes!("../../resources/assets/logo-light.png")
+                include_bytes!("../../../resources/assets/logo-light.png")
             }
         };
 

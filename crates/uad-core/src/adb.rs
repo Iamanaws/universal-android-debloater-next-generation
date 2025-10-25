@@ -43,7 +43,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-use crate::core::utils::is_all_w_c;
+use crate::utils::is_all_w_c;
+use log::{error, info};
 
 /// Convert ADB output bytes to a trimmed UTF-8 string.
 /// Uses lossy conversion to prevent panics on non-UTF8 output from certain OEMs.
@@ -51,6 +52,7 @@ pub fn to_trimmed_utf8(v: Vec<u8>) -> String {
     String::from_utf8_lossy(&v).trim_end().to_string()
 }
 
+#[cfg(debug_assertions)]
 #[must_use]
 #[cfg(debug_assertions)]
 fn is_version_triple(s: &str) -> bool {

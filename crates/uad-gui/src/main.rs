@@ -1,8 +1,5 @@
 #![windows_subsystem = "windows"]
-#[macro_use]
-extern crate log;
 
-use crate::core::utils::setup_uad_dir;
 use fern::{
     FormatCallback,
     colors::{Color, ColoredLevelConfig},
@@ -10,12 +7,10 @@ use fern::{
 use log::Record;
 use std::sync::LazyLock;
 use std::{fmt::Arguments, fs::OpenOptions, path::PathBuf};
+use uad_core::utils::setup_uad_dir;
 
-mod core;
-mod gui;
+use uad_gui::gui::UadGui;
 
-static CONFIG_DIR: LazyLock<PathBuf> =
-    LazyLock::new(|| setup_uad_dir(&dirs::config_dir().expect("Can't detect config dir")));
 static CACHE_DIR: LazyLock<PathBuf> =
     LazyLock::new(|| setup_uad_dir(&dirs::cache_dir().expect("Can't detect cache dir")));
 
@@ -30,7 +25,7 @@ fn main() -> iced::Result {
     }
 
     setup_logger().expect("setup logging");
-    gui::UadGui::start()
+    UadGui::start()
 }
 
 /// Sets up logging to a new file in `CACHE_DIR"/uadng.log"`
@@ -75,14 +70,14 @@ fn setup_logger() -> Result<(), fern::InitError> {
         .format(make_formatter(false))
         .level(default_log_level)
         // Rust compiler makes module names use _ instead of -
-        .level_for("uad_ng", log::LevelFilter::Debug)
+        .level_for("uad_gui", log::LevelFilter::Debug)
         .chain(log_file);
 
     let stdout_dispatcher = fern::Dispatch::new()
         .format(make_formatter(true))
         .level(default_log_level)
         // Rust compiler makes module names use _ instead of -
-        .level_for("uad_ng", log::LevelFilter::Warn)
+        .level_for("uad_gui", log::LevelFilter::Warn)
         .chain(std::io::stdout());
 
     fern::Dispatch::new()

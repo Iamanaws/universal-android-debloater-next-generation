@@ -1,14 +1,14 @@
 #![warn(clippy::unwrap_used)]
 
-use crate::core::{
+use crate::{
     adb::{ACommand as AdbCommand, PmListPacksFlag},
-    sync::User,
+    sync::{CorePackage, User},
     theme::Theme,
-    uad_lists::{PackageHashMap, PackageState, Removal, UadList},
+    uad_lists::{PackageHashMap, PackageState, Removal},
 };
-use crate::gui::widgets::package_row::PackageRow;
 use chrono::{DateTime, offset::Utc};
 use csv::Writer;
+use log::error;
 use std::{
     collections::HashSet,
     fmt, fs,
@@ -68,7 +68,7 @@ pub fn fetch_packages(
     uad_lists: &PackageHashMap,
     device_serial: &str,
     user_id: Option<u16>,
-) -> Vec<PackageRow> {
+) -> Vec<CorePackage> {
     let all_sys_packs = AdbCommand::new()
         .shell(device_serial)
         .pm()
@@ -89,24 +89,21 @@ pub fn fetch_packages(
         .into_iter()
         .collect();
 
-    let mut description;
-    let mut uad_list;
     let mut state;
+    let mut description;
     let mut removal;
-    let mut user_package: Vec<PackageRow> = Vec::new();
+    let mut user_package: Vec<CorePackage> = Vec::new();
 
     for pack_name in all_sys_packs {
         let p_name = &pack_name;
         state = PackageState::Uninstalled;
-        description = "[No description]: CONTRIBUTION WELCOMED";
-        uad_list = UadList::Unlisted;
+        description = String::from("[No description]: CONTRIBUTION WELCOMED");
         removal = Removal::Unlisted;
 
         if let Some(package) = uad_lists.get(p_name) {
             if !package.description.is_empty() {
-                description = &package.description;
+                description = package.description.clone();
             }
-            uad_list = package.list;
             removal = package.removal;
         }
 
@@ -116,9 +113,13 @@ pub fn fetch_packages(
             state = PackageState::Disabled;
         }
 
-        let package_row =
-            PackageRow::new(p_name, state, description, uad_list, removal, false, false);
-        user_package.push(package_row);
+        let package = CorePackage {
+            name: p_name.clone(),
+            state,
+            description,
+            removal,
+        };
+        user_package.push(package);
     }
     user_package.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
     user_package
@@ -192,15 +193,10 @@ pub fn format_diff_time_from_now(date: DateTime<Utc>) -> String {
     }
 }
 
-/// Export selected packages.
+/// Export selected package names.
 /// File will be saved in same directory where UAD-ng is located.
-pub async fn export_selection(packages: Vec<PackageRow>) -> Result<bool, String> {
-    let selected = packages
-        .iter()
-        .filter(|p| p.selected)
-        .map(|p| p.name.clone())
-        .collect::<Vec<String>>()
-        .join("\n");
+pub async fn export_selection(package_names: Vec<String>) -> Result<bool, String> {
+    let selected = package_names.join("\n");
 
     match fs::write(EXPORT_FILE_NAME, selected) {
         Ok(()) => Ok(true),
@@ -234,21 +230,11 @@ impl fmt::Display for DisplayablePath {
     }
 }
 
-/// Can be used to choose any folder.
-pub async fn open_folder() -> Result<PathBuf, Error> {
-    let picked_folder = rfd::AsyncFileDialog::new()
-        .pick_folder()
-        .await
-        .ok_or(Error::DialogClosed)?;
-
-    Ok(picked_folder.path().to_owned())
-}
-
 /// Export uninstalled packages in a csv file.
 /// Exported information will contain package name and description.
 pub async fn export_packages(
     user: User,
-    phone_packages: Vec<Vec<PackageRow>>,
+    phone_packages: Vec<Vec<CorePackage>>,
 ) -> Result<bool, String> {
     let backup_file = generate_backup_name(chrono::Local::now());
 
@@ -258,7 +244,7 @@ pub async fn export_packages(
     wtr.write_record(["Package Name", "Description"])
         .map_err(|err| err.to_string())?;
 
-    let uninstalled_packages: Vec<&PackageRow> = phone_packages[user.index]
+    let uninstalled_packages: Vec<&CorePackage> = phone_packages[user.index]
         .iter()
         .filter(|p| p.state == PackageState::Uninstalled)
         .collect();
@@ -271,6 +257,34 @@ pub async fn export_packages(
     wtr.flush().map_err(|err| err.to_string())?;
 
     Ok(true)
+}
+
+/// Truncate description to fit within max length, taking only the first line
+pub fn truncate_description(desc: &str, max_len: usize) -> String {
+    let first_line = desc.splitn(2, '\n').next().unwrap_or("").trim_end();
+
+    if first_line.len() <= max_len {
+        first_line.to_string()
+    } else {
+        format!("{}...", &first_line[..max_len.saturating_sub(3)])
+    }
+}
+
+/// Check if package matches search term (checks name and description)
+pub fn matches_search(pkg_name: &str, search_term: &str, pkg_description: Option<&str>) -> bool {
+    let search_lower = search_term.to_lowercase();
+
+    if pkg_name.to_lowercase().contains(&search_lower) {
+        return true;
+    }
+
+    if let Some(description) = pkg_description {
+        if description.to_lowercase().contains(&search_lower) {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]

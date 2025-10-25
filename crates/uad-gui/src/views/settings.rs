@@ -1,15 +1,7 @@
-use crate::core::{
-    config::{BackupSettings, Config, DeviceSettings, GeneralSettings},
-    helpers::button_primary,
-    save::{backup_phone, list_available_backup_user, list_available_backups, restore_backup},
-    sync::{AdbError, Phone, User, get_android_sdk, run_adb_action, supports_multi_user},
-    theme::Theme,
-    utils::{
-        DisplayablePath, Error, NAME, export_packages, generate_backup_name, open_folder, open_url,
-        string_to_theme,
-    },
-};
-use crate::gui::{
+use crate::helpers::{button_primary, open_folder};
+use crate::theme::Theme;
+use crate::theme::string_to_theme;
+use crate::{
     style,
     views::list::{List as AppsView, PackageInfo},
     widgets::modal::Modal,
@@ -17,9 +9,20 @@ use crate::gui::{
     widgets::package_row::PackageRow,
     widgets::text,
 };
+use chrono;
 use iced::widget::{Space, button, checkbox, column, container, pick_list, radio, row, scrollable};
 use iced::{Alignment, Element, Length, Renderer, Task, alignment};
+use log::{debug, error, info};
 use std::path::PathBuf;
+use uad_core::{
+    config::{BackupSettings, Config, DeviceSettings, GeneralSettings},
+    save::{backup_phone, list_available_backup_user, list_available_backups, restore_backup},
+    sync::{
+        AdbError, CorePackage, Phone, User, get_android_sdk, run_adb_shell_action,
+        supports_multi_user,
+    },
+    utils::{DisplayablePath, Error, NAME, export_packages, generate_backup_name, open_url},
+};
 
 #[derive(Debug, Clone)]
 pub enum PopUpModal {
@@ -101,10 +104,11 @@ impl Settings {
         Task::none()
     }
 
-    fn handle_expert_mode(&mut self, phone: &Phone, toggled: bool) -> Task<Message> {
+    fn handle_expert_mode(&mut self, _phone: &Phone, toggled: bool) -> Task<Message> {
         self.general.expert_mode = toggled;
         debug!("Config change: {self:?}");
-        Config::save_changes(self, &phone.adb_id);
+        let mut config = Config::load_configuration_file();
+        config.save_device_settings(self.device.clone(), self.general.clone());
         Task::none()
     }
 
@@ -112,22 +116,25 @@ impl Settings {
         if phone.android_sdk >= 23 {
             self.device.disable_mode = toggled;
             debug!("Config change: {self:?}");
-            Config::save_changes(self, &phone.adb_id);
+            let mut config = Config::load_configuration_file();
+            config.save_device_settings(self.device.clone(), self.general.clone());
         }
         Task::none()
     }
 
-    fn handle_multi_user_mode(&mut self, phone: &Phone, toggled: bool) -> Task<Message> {
+    fn handle_multi_user_mode(&mut self, _phone: &Phone, toggled: bool) -> Task<Message> {
         self.device.multi_user_mode = toggled;
         debug!("Config change: {self:?}");
-        Config::save_changes(self, &phone.adb_id);
+        let mut config = Config::load_configuration_file();
+        config.save_device_settings(self.device.clone(), self.general.clone());
         Task::none()
     }
 
-    fn handle_apply_theme(&mut self, phone: &Phone, theme: Theme) -> Task<Message> {
+    fn handle_apply_theme(&mut self, _phone: &Phone, theme: Theme) -> Task<Message> {
         self.general.theme = theme.to_string();
         debug!("Config change: {self:?}");
-        Config::save_changes(self, &phone.adb_id);
+        let mut config = Config::load_configuration_file();
+        config.save_device_settings(self.device.clone(), self.general.clone());
         Task::none()
     }
 
@@ -182,11 +189,15 @@ impl Settings {
         phone: &Phone,
         packages: &[Vec<PackageRow>],
     ) -> Task<Message> {
+        let core_packages: Vec<Vec<_>> = packages
+            .iter()
+            .map(|user_packages| user_packages.iter().map(CorePackage::from).collect())
+            .collect();
         Task::perform(
             backup_phone(
                 phone.user_list.clone(),
                 self.device.device_id.clone(),
-                packages.to_vec(),
+                core_packages,
             ),
             Message::DeviceBackedUp,
         )
@@ -217,7 +228,11 @@ impl Settings {
         packages: &[Vec<PackageRow>],
         nb_running_async_adb_commands: &mut u32,
     ) -> Task<Message> {
-        match restore_backup(phone, packages, &self.device) {
+        let core_packages: Vec<Vec<_>> = packages
+            .iter()
+            .map(|user_packages| user_packages.iter().map(CorePackage::from).collect())
+            .collect();
+        match restore_backup(phone, &core_packages, &self.device) {
             Ok(restore_result) => {
                 let mut commands = vec![];
                 *nb_running_async_adb_commands = 0;
@@ -229,8 +244,14 @@ impl Settings {
                     };
                     for command in p.commands.clone() {
                         *nb_running_async_adb_commands += 1;
+                        let p_info_clone = p_info.clone();
+                        let phone_id = phone.adb_id.clone();
                         commands.push(Task::perform(
-                            run_adb_action(phone.adb_id.clone(), command, p_info.clone()),
+                            async move {
+                                run_adb_shell_action(phone_id, command)
+                                    .await
+                                    .map(|_| p_info_clone)
+                            },
                             Message::RestoringDevice,
                         ));
                     }
@@ -273,7 +294,8 @@ impl Settings {
 
         if let Ok(path) = result {
             self.general.backup_folder = path;
-            Config::save_changes(self, &phone.adb_id);
+            let mut config = Config::load_configuration_file();
+            config.save_device_settings(self.device.clone(), self.general.clone());
             self.load_device_settings(phone);
         }
         Task::none()
@@ -292,8 +314,12 @@ impl Settings {
         selected_user: Option<User>,
         packages: &[Vec<PackageRow>],
     ) -> Task<Message> {
+        let core_packages: Vec<Vec<_>> = packages
+            .iter()
+            .map(|user_packages| user_packages.iter().map(CorePackage::from).collect())
+            .collect();
         Task::perform(
-            export_packages(selected_user.unwrap_or_default(), packages.to_vec()),
+            export_packages(selected_user.unwrap_or_default(), core_packages),
             Message::PackagesExported,
         )
     }
