@@ -65,6 +65,7 @@ pub struct List {
     current_package_index: usize,
     is_adb_satisfied: bool,
     copy_confirmation: bool,
+    fallback_notifications: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -81,7 +82,7 @@ pub enum Message {
     RemovalSelected(Removal),
     ApplyActionOnSelection,
     List(usize, RowMessage),
-    ChangePackageState(Result<PackageInfo, AdbError>),
+    VerifyAndFallback(Result<PackageInfo, AdbError>),
     Nothing,
     ModalHide,
     ModalUserSelected(User),
@@ -140,7 +141,9 @@ impl List {
             Message::List(i, row_msg) => self.on_list_row(i, &row_msg, settings, selected_device),
             Message::ApplyActionOnSelection => self.on_apply_action_on_selection(),
             Message::UserSelected(user) => self.on_user_selected(user),
-            Message::ChangePackageState(res) => self.on_change_package_state(res, settings),
+            Message::VerifyAndFallback(res) => {
+                self.on_verify_and_fallback(res, settings, selected_device)
+            }
             Message::ModalUserSelected(user) => {
                 self.on_modal_user_selected(user, settings, selected_device, list_update_state)
             }
@@ -361,6 +364,30 @@ impl List {
                 .style(style::Container::BorderedFrame);
 
         let control_panel = self.control_panel(selected_device);
+
+        // Fallback notifications area
+        let notifications_area: Element<'_, Message, Theme, Renderer> =
+            if !self.fallback_notifications.is_empty() {
+                let notification_texts: Vec<_> = self
+                    .fallback_notifications
+                    .iter()
+                    .map(|msg| text(msg).style(style::Text::Commentary).into())
+                    .collect();
+
+                container(
+                    column![
+                        text("Fallback Actions Performed:").style(style::Text::Default),
+                        column(notification_texts).spacing(4)
+                    ]
+                    .spacing(6),
+                )
+                .padding(8)
+                .style(style::Container::BorderedFrame)
+                .into()
+            } else {
+                Space::new(Length::Shrink, Length::Shrink).into()
+            };
+
         let content = if selected_device.user_list.is_empty()
             || match self.selected_user {
                 Some(u) => !self.phone_packages[u.index].is_empty(),
@@ -373,6 +400,7 @@ impl List {
             } {
             column![
                 control_panel,
+                notifications_area,
                 packages_scrollable,
                 description_panel,
                 action_row,
@@ -380,6 +408,7 @@ impl List {
         } else {
             column![
                 control_panel,
+                notifications_area,
                 container(unavailable)
                     .height(Length::Fill)
                     .center_y(Length::Fill),
@@ -954,15 +983,69 @@ impl List {
         Task::none()
     }
 
-    fn on_change_package_state(
+    fn on_verify_and_fallback(
         &mut self,
         res: Result<PackageInfo, AdbError>,
         settings: &Settings,
+        selected_device: &Phone,
     ) -> Task<Message> {
         match res {
             Ok(p) => {
                 let package = &mut self.phone_packages[p.i_user][p.index];
-                package.state = package.state.opposite(settings.device.disable_mode);
+                let wanted_state = package.state.opposite(settings.device.disable_mode);
+
+                // Verify the actual package state after the operation
+                let actual_state = crate::core::sync::verify_package_state(
+                    &package.name,
+                    selected_device.adb_id.as_str(),
+                    Some(selected_device.user_list[p.i_user].id),
+                );
+
+                if actual_state != wanted_state {
+                    // Package state verification failed, attempt fallback
+                    let fallback_result = crate::core::sync::attempt_fallback(
+                        package,
+                        wanted_state,
+                        actual_state,
+                        selected_device.user_list[p.i_user],
+                        selected_device,
+                    );
+
+                    match fallback_result {
+                        Ok(fallback_action) => {
+                            let notification = format!(
+                                "Package '{}' was {} but {} instead. Fallback: {}",
+                                package.name,
+                                match wanted_state {
+                                    PackageState::Uninstalled => "uninstalled",
+                                    PackageState::Disabled => "disabled",
+                                    PackageState::Enabled => "enabled",
+                                    PackageState::All => "modified",
+                                },
+                                match actual_state {
+                                    PackageState::Uninstalled => "remains uninstalled",
+                                    PackageState::Disabled => "was disabled",
+                                    PackageState::Enabled => "was enabled",
+                                    PackageState::All => "state unknown",
+                                },
+                                fallback_action
+                            );
+                            self.fallback_notifications.push(notification);
+
+                            // Update package state to reflect the fallback
+                            package.state = actual_state;
+                        }
+                        Err(err) => {
+                            let notification =
+                                format!("Package '{}' verification failed: {}", package.name, err);
+                            self.fallback_notifications.push(notification);
+                        }
+                    }
+                } else {
+                    // Operation succeeded as expected
+                    package.state = wanted_state;
+                }
+
                 package.selected = false;
                 self.selected_packages
                     .retain(|&x| x.1 != p.index && x.0 != p.i_user);
@@ -1176,7 +1259,7 @@ fn build_action_pkg_commands(
                     p_info,
                 ),
                 if j == 0 {
-                    Message::ChangePackageState
+                    Message::VerifyAndFallback
                 } else {
                     |_| Message::Nothing
                 },
