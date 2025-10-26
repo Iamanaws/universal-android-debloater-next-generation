@@ -278,6 +278,102 @@ pub fn get_android_sdk(device_serial: &str) -> u8 {
         })
 }
 
+/// Detect cross-user behavior and return appropriate notification message.
+/// This handles all three cases of unexpected cross-user behavior:
+/// - Case A: Uninstall → Restore (package appears on other users)
+/// - Case B: Uninstall → Uninstall (package disappears from other users)  
+/// - Case C: Restore → Restore (package appears on other users)
+pub fn detect_cross_user_behavior(
+    package_name: &str,
+    device_serial: &str,
+    target_user_id: u16,
+    wanted_state: PackageState,
+    actual_state: PackageState,
+    phone: &Phone,
+) -> Option<String> {
+    // Only check if operation was successful on target user
+    if actual_state != wanted_state {
+        return None;
+    }
+
+    // Only check if we have multiple users
+    if phone.user_list.len() < 2 {
+        return None;
+    }
+
+    let cross_user_states =
+        check_cross_user_package_existence(package_name, device_serial, target_user_id, phone);
+
+    match wanted_state {
+        PackageState::Uninstalled => {
+            if !cross_user_states.is_empty() {
+                // Case A: Uninstall → Restore
+                let user_list = cross_user_states
+                    .iter()
+                    .map(|(uid, state)| format!("user {} ({:?})", uid, state))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                Some(format!(
+                    "Detected cross-user restoration: package exists on {} after uninstalling from user {}",
+                    user_list, target_user_id
+                ))
+            } else {
+                // Case B: Uninstall → Uninstall (check if all users lost package)
+                let affected_users: Vec<_> = phone
+                    .user_list
+                    .iter()
+                    .filter(|u| !u.protected && u.id != target_user_id)
+                    .filter(|u| {
+                        verify_package_state(package_name, device_serial, Some(u.id))
+                            == PackageState::Uninstalled
+                    })
+                    .map(|u| u.id)
+                    .collect();
+
+                if !affected_users.is_empty() {
+                    let user_list = affected_users
+                        .iter()
+                        .map(|uid| format!("user {}", uid))
+                        .collect::<Vec<_>>()
+                        .join(", ");
+
+                    Some(format!(
+                        "Detected cross-user uninstall: package was also uninstalled from {} after uninstalling from user {}",
+                        user_list, target_user_id
+                    ))
+                } else {
+                    None
+                }
+            }
+        }
+        PackageState::Enabled | PackageState::Disabled => {
+            // Case C: Restore → Restore
+            if !cross_user_states.is_empty() {
+                let user_list = cross_user_states
+                    .iter()
+                    .map(|(uid, state)| format!("user {} ({:?})", uid, state))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                Some(format!(
+                    "Detected cross-user restoration: package exists on {} after {} from user {}",
+                    user_list,
+                    if wanted_state == PackageState::Enabled {
+                        "enabling"
+                    } else {
+                        "disabling"
+                    },
+                    target_user_id
+                ))
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Minimum inclusive Android SDK version
 /// that supports multi-user mode.
 /// Lollipop 5.0
@@ -410,6 +506,28 @@ pub fn verify_package_state(
 
     // Package not found at all
     PackageState::Uninstalled
+}
+
+/// Check if a package exists on any other users besides the target user.
+/// This helps detect OEM-specific cross-user restoration behavior.
+pub fn check_cross_user_package_existence(
+    package_name: &str,
+    device_serial: &str,
+    target_user_id: u16,
+    phone: &Phone,
+) -> Vec<(u16, PackageState)> {
+    let mut other_user_states = Vec::new();
+
+    for user in phone.user_list.iter() {
+        if user.id != target_user_id && !user.protected {
+            let state = verify_package_state(package_name, device_serial, Some(user.id));
+            if state != PackageState::Uninstalled {
+                other_user_states.push((user.id, state));
+            }
+        }
+    }
+
+    other_user_states
 }
 
 /// Attempt fallback action when package state verification fails

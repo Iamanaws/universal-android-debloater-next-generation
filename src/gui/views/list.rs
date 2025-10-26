@@ -1001,7 +1001,23 @@ impl List {
                     Some(selected_device.user_list[p.i_user].id),
                 );
 
-                if actual_state != wanted_state {
+                // Check for unexpected cross-user behavior
+                if actual_state == wanted_state {
+                    // Use core detection function
+                    if let Some(notification) = crate::core::sync::detect_cross_user_behavior(
+                        &package.name,
+                        selected_device.adb_id.as_str(),
+                        selected_device.user_list[p.i_user].id,
+                        wanted_state,
+                        actual_state,
+                        selected_device,
+                    ) {
+                        self.fallback_notifications.push(notification);
+                    }
+
+                    // Update package state to reflect the successful operation
+                    package.state = wanted_state;
+                } else if actual_state != wanted_state {
                     // Package state verification failed, attempt fallback
                     let fallback_result = crate::core::sync::attempt_fallback(
                         package,
@@ -1232,7 +1248,11 @@ fn build_action_pkg_commands(
             && packages
                 .get(u.index)
                 .and_then(|user_pkgs| user_pkgs.get(selection.1))
-                .is_some_and(|row_pkg| row_pkg.selected || settings.multi_user_mode)
+                .is_some_and(|row_pkg| {
+                    // Only apply to users where package is explicitly selected
+                    // OR if multi_user_mode is enabled AND this is the initiating user
+                    row_pkg.selected || (settings.multi_user_mode && u.index == selection.0)
+                })
     }) {
         let u_pkg = &packages[u.index][selection.1];
         let wanted_state = if settings.multi_user_mode {
