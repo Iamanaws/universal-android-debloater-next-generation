@@ -47,8 +47,8 @@ use crate::core::utils::is_all_w_c;
 
 /// Convert ADB output bytes to a trimmed UTF-8 string.
 /// Uses lossy conversion to prevent panics on non-UTF8 output from certain OEMs.
-pub fn to_trimmed_utf8(v: Vec<u8>) -> String {
-    String::from_utf8_lossy(&v).trim_end().to_string()
+pub fn to_trimmed_utf8(v: &[u8]) -> String {
+    String::from_utf8_lossy(v).trim_end().to_string()
 }
 
 #[must_use]
@@ -198,11 +198,11 @@ impl ACommand {
                 Err("Cannot run ADB, likely not found".to_string())
             }
             Ok(o) => {
-                let stdout = to_trimmed_utf8(o.stdout);
+                let stdout = to_trimmed_utf8(&o.stdout);
                 if o.status.success() {
                     Ok(stdout)
                 } else {
-                    let stderr = to_trimmed_utf8(o.stderr);
+                    let stderr = to_trimmed_utf8(&o.stderr);
                     // ADB does really weird things:
                     // Some errors are not redirected to `stderr`
                     let err = if stdout.is_empty() { stderr } else { stdout };

@@ -92,18 +92,16 @@ fn make_friendly_error_message(error_output: &str, action: &str) -> String {
     if error_output.contains("DELETE_FAILED_USER_RESTRICTED") {
         return format!(
             "Cannot uninstall: This package is restricted by the device manufacturer (Samsung Knox or similar).\n\
-            Error: {}\n\
-            Tip: Try disabling the package instead, or check device settings for Knox/security restrictions.",
-            error_output
+            Error: {error_output}\n\
+            Tip: Try disabling the package instead, or check device settings for Knox/security restrictions."
         );
     }
 
     if error_output.contains("NOT_INSTALLED_FOR_USER") {
         return format!(
             "Package is not installed for the current user.\n\
-            Error: {}\n\
-            Tip: The package may be installed for a different user profile or work profile.",
-            error_output
+            Error: {error_output}\n\
+            Tip: The package may be installed for a different user profile or work profile."
         );
     }
 
@@ -111,9 +109,8 @@ fn make_friendly_error_message(error_output: &str, action: &str) -> String {
     if error_output.contains("Shell cannot change component state for null") {
         return format!(
             "Invalid package: Empty package name detected.\n\
-            Error: {}\n\
-            Tip: Please refresh the package list and try again.",
-            error_output
+            Error: {error_output}\n\
+            Tip: Please refresh the package list and try again."
         );
     }
 
@@ -123,9 +120,8 @@ fn make_friendly_error_message(error_output: &str, action: &str) -> String {
     {
         return format!(
             "Permission denied: Insufficient privileges to perform this action.\n\
-            Error: {}\n\
-            Tip: This may require root access or the package is protected by the system.",
-            error_output
+            Error: {error_output}\n\
+            Tip: This may require root access or the package is protected by the system."
         );
     }
 
@@ -133,14 +129,13 @@ fn make_friendly_error_message(error_output: &str, action: &str) -> String {
     if error_output.contains("DELETE_FAILED_DEVICE_POLICY_MANAGER") {
         return format!(
             "Cannot modify: Package is managed by device policy (MDM/EMM).\n\
-            Error: {}\n\
-            Tip: Contact your IT administrator if this is a work device.",
-            error_output
+            Error: {error_output}\n\
+            Tip: Contact your IT administrator if this is a work device."
         );
     }
 
     // Generic failure with context
-    format!("{} -> {}", action, error_output)
+    format!("{action} -> {error_output}")
 }
 
 /// If `None`, returns an empty String, not " --user 0"
@@ -326,19 +321,7 @@ pub fn detect_cross_user_behavior(
 
     match wanted_state {
         PackageState::Uninstalled => {
-            if !after_states.is_empty() {
-                // Case A: Uninstall → Restore (package appears on other users)
-                let user_list = after_states
-                    .iter()
-                    .map(|(uid, state)| format!("user {} ({:?})", uid, state))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-
-                Some(format!(
-                    "Detected cross-user restoration: package exists on {} after uninstalling from user {}",
-                    user_list, target_user_id
-                ))
-            } else {
+            if after_states.is_empty() {
                 // Case B: Uninstall → Uninstall (check if all users lost package)
                 let affected_users: Vec<_> = before_states
                     .iter()
@@ -352,20 +335,30 @@ pub fn detect_cross_user_behavior(
                     .map(|(uid, _)| uid)
                     .collect();
 
-                if !affected_users.is_empty() {
+                if affected_users.is_empty() {
+                    None
+                } else {
                     let user_list = affected_users
                         .iter()
-                        .map(|uid| format!("user {}", uid))
+                        .map(|uid| format!("user {uid}"))
                         .collect::<Vec<_>>()
                         .join(", ");
 
                     Some(format!(
-                        "Detected cross-user uninstall: package was also uninstalled from {} after uninstalling from user {}",
-                        user_list, target_user_id
+                        "Detected cross-user uninstall: package was also uninstalled from {user_list} after uninstalling from user {target_user_id}"
                     ))
-                } else {
-                    None
                 }
+            } else {
+                // Case A: Uninstall → Restore (package appears on other users)
+                let user_list = after_states
+                    .iter()
+                    .map(|(uid, state)| format!("user {uid} ({state:?})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+
+                Some(format!(
+                    "Detected cross-user restoration: package exists on {user_list} after uninstalling from user {target_user_id}"
+                ))
             }
         }
         PackageState::Enabled | PackageState::Disabled => {
@@ -377,33 +370,30 @@ pub fn detect_cross_user_behavior(
                     before_states
                         .iter()
                         .find(|(before_uid, _)| before_uid == uid)
-                        .map(|(_, before_state)| *before_state == PackageState::Uninstalled)
-                        .unwrap_or(true) // If not in before_states, treat as uninstalled
+                        .is_none_or(|(_, before_state)| *before_state == PackageState::Uninstalled) // If not in before_states, treat as uninstalled
                 })
                 .collect();
 
-            if !newly_appeared.is_empty() {
+            if newly_appeared.is_empty() {
+                None
+            } else {
                 let user_list = newly_appeared
                     .iter()
-                    .map(|(uid, state)| format!("user {} ({:?})", uid, state))
+                    .map(|(uid, state)| format!("user {uid} ({state:?})"))
                     .collect::<Vec<_>>()
                     .join(", ");
 
                 Some(format!(
-                    "Detected cross-user restoration: package exists on {} after {} from user {}",
-                    user_list,
+                    "Detected cross-user restoration: package exists on {user_list} after {} from user {target_user_id}",
                     if wanted_state == PackageState::Enabled {
                         "enabling"
                     } else {
                         "disabling"
-                    },
-                    target_user_id
+                    }
                 ))
-            } else {
-                None
             }
         }
-        _ => None,
+        PackageState::All => None,
     }
 }
 
@@ -509,10 +499,9 @@ pub fn verify_package_state(
         .shell(device_serial)
         .pm()
         .list_packages_sys(Some(PmListPacksFlag::OnlyEnabled), user_id)
+        && enabled_packages.contains(&package_name.to_string())
     {
-        if enabled_packages.contains(&package_name.to_string()) {
-            return PackageState::Enabled;
-        }
+        return PackageState::Enabled;
     }
 
     // Check if package is disabled
@@ -520,10 +509,9 @@ pub fn verify_package_state(
         .shell(device_serial)
         .pm()
         .list_packages_sys(Some(PmListPacksFlag::OnlyDisabled), user_id)
+        && disabled_packages.contains(&package_name.to_string())
     {
-        if disabled_packages.contains(&package_name.to_string()) {
-            return PackageState::Disabled;
-        }
+        return PackageState::Disabled;
     }
 
     // Check if package exists at all (including uninstalled)
@@ -531,10 +519,9 @@ pub fn verify_package_state(
         .shell(device_serial)
         .pm()
         .list_packages_sys(Some(PmListPacksFlag::IncludeUninstalled), user_id)
+        && all_packages.contains(&package_name.to_string())
     {
-        if all_packages.contains(&package_name.to_string()) {
-            return PackageState::Uninstalled;
-        }
+        return PackageState::Uninstalled;
     }
 
     // Package not found at all
@@ -551,7 +538,7 @@ pub fn check_cross_user_package_existence(
 ) -> Vec<(u16, PackageState)> {
     let mut other_user_states = Vec::new();
 
-    for user in phone.user_list.iter() {
+    for user in &phone.user_list {
         if user.id != target_user_id && !user.protected {
             let state = verify_package_state(package_name, device_serial, Some(user.id));
             if state != PackageState::Uninstalled {
@@ -581,15 +568,15 @@ pub fn attempt_fallback(
             let commands =
                 apply_pkg_state_commands(&core_package, PackageState::Disabled, user, phone);
 
-            if !commands.is_empty() {
+            if commands.is_empty() {
+                Err("No disable command available for this Android version".to_string())
+            } else {
                 // Execute the disable command
                 let action = commands[0].clone();
                 match AdbCommand::new().shell(&phone.adb_id).raw(&action) {
                     Ok(_) => Ok("disabled package instead of uninstalling".to_string()),
-                    Err(err) => Err(format!("Failed to disable package: {}", err)),
+                    Err(err) => Err(format!("Failed to disable package: {err}")),
                 }
-            } else {
-                Err("No disable command available for this Android version".to_string())
             }
         }
 
@@ -602,15 +589,15 @@ pub fn attempt_fallback(
             let commands =
                 apply_pkg_state_commands(&core_package, PackageState::Uninstalled, user, phone);
 
-            if !commands.is_empty() {
+            if commands.is_empty() {
+                Err("No uninstall command available for this Android version".to_string())
+            } else {
                 // Execute the uninstall command
                 let action = commands[0].clone();
                 match AdbCommand::new().shell(&phone.adb_id).raw(&action) {
                     Ok(_) => Ok("uninstalled package instead of disabling".to_string()),
-                    Err(err) => Err(format!("Failed to uninstall package: {}", err)),
+                    Err(err) => Err(format!("Failed to uninstall package: {err}")),
                 }
-            } else {
-                Err("No uninstall command available for this Android version".to_string())
             }
         }
 
@@ -624,7 +611,9 @@ pub fn attempt_fallback(
             let uninstall_commands =
                 apply_pkg_state_commands(&core_package, PackageState::Uninstalled, user, phone);
 
-            if !uninstall_commands.is_empty() {
+            if uninstall_commands.is_empty() {
+                Err("No uninstall command available for reinstall attempt".to_string())
+            } else {
                 let uninstall_action = uninstall_commands[0].clone();
                 match AdbCommand::new()
                     .shell(&phone.adb_id)
@@ -643,33 +632,27 @@ pub fn attempt_fallback(
                             phone,
                         );
 
-                        if !enable_commands.is_empty() {
+                        if enable_commands.is_empty() {
+                            Ok("uninstalled package but couldn't reinstall".to_string())
+                        } else {
                             let enable_action = enable_commands[0].clone();
                             match AdbCommand::new().shell(&phone.adb_id).raw(&enable_action) {
                                 Ok(_) => {
                                     Ok("uninstalled and reinstalled package to enable it"
                                         .to_string())
                                 }
-                                Err(err) => Err(format!("Failed to reinstall package: {}", err)),
+                                Err(err) => Err(format!("Failed to reinstall package: {err}")),
                             }
-                        } else {
-                            Ok("uninstalled package but couldn't reinstall".to_string())
                         }
                     }
-                    Err(err) => Err(format!(
-                        "Failed to uninstall package for reinstall: {}",
-                        err
-                    )),
+                    Err(err) => Err(format!("Failed to uninstall package for reinstall: {err}")),
                 }
-            } else {
-                Err("No uninstall command available for reinstall attempt".to_string())
             }
         }
 
         // Other cases - no fallback available
         _ => Err(format!(
-            "No fallback available for wanted state {:?} and actual state {:?}",
-            wanted_state, actual_state
+            "No fallback available for wanted state {wanted_state:?} and actual state {actual_state:?}"
         )),
     }
 }
